@@ -1,2 +1,42 @@
-# ImageJ_toolkits
-ImageJ Toolkits 是一款集成了批量裁剪、智能融合、比率分析及多级撤回功能的 ImageJ/Fiji 浮动工具箱，用于细胞图像处理。ImageJ Tools is a floating toolbox for ImageJ/Fiji that integrates batch cropping, smart merging, ratio analysis, and a multi-step undo system.
+# **ImageJ Tools for Xiaoming (小明的 ImageJ 工具箱) 🔬**
+
+**一个基于 Jython 开发的高效、轻量化 ImageJ/Fiji 浮动工具箱，专为简化细胞图像处理工作流而生。**
+
+## **🌟 核心亮点**
+
+* **⚡️ 极简操作**：所有功能集成在一个悬浮窗口中，告别繁琐的菜单查找。  
+* **↩️ 智能撤回 (Smart Undo)**：独特的“后悔药”机制，支持多级撤回（Multi-step Undo），让 ImageJ 也能像 PS 一样随时回退。  
+* **📂 拖拽即开 (Drag & Drop)**：直接将 Bio-Formats 文件（.czi, .lsm, .nd2, .tif 等）拖入工具箱，自动按最优参数（Hyperstack, Colorized）打开。  
+* **⚙️ 高度定制**：每个模块旁边都有设置按钮，参数一次配置，永久保存。  
+* **🧹 自动清理**：临时快照文件在工具箱关闭时自动删除，不占用磁盘空间。
+
+## **🛠 功能模块**
+
+1. **✂️ Apply ROI & Crop (批量裁剪)**  
+   * 在当前图片画好选区，一键应用到所有打开的图片并裁剪。  
+   * *设置*：可选是否弹出确认框、是否应用到所有图片。  
+2. **🎨 Batch Merge Channels (智能融合)**  
+   * 自动识别并融合灰度通道图片。  
+   * *设置*：自定义要融合的通道（如仅融合 Ch1 和 Ch3），自动关闭多余通道。  
+3. **📊 Ratio Analysis (比率分析)**  
+   * 计算双通道比率图像（如 FRET/钙成像），自动背景掩膜，伪彩显示。  
+   * *设置*：自定义分子/分母通道、默认 Min/Max 值、完全复刻 ImageJ 原生的 Calibration Bar 设置。  
+4. **📏 Scale Bar & Copy (标尺与复制)**  
+   * 批量添加标尺，并按顺序自动复制图片到剪贴板，方便制作 PPT。  
+   * *设置*：完全自定义标尺外观（颜色、位置、字体、背景等），可单独开关标尺或复制功能。  
+5. **☀️ Batch Brightness (批量亮度)**  
+   * 交互式调节当前图片亮度，确认后一键应用到所有同通道图片。  
+6. **↩️ Smart Undo (智能撤回)**  
+   * 支持撤回到操作前的状态（包括窗口布局和数据）。  
+   * *设置*：最大撤回步数（1-10步）。  
+7. **🗑️ Close All (一键关闭)**  
+   * 强制关闭所有图像，不弹出保存提示。
+
+## **📥 安装与使用**
+
+1. **下载**：获取 Cell\_Image\_Toolbox\_v2.py 文件。  
+2. **安装**：将文件放入 Fiji 的 plugins/Scripts 文件夹中（或者直接拖入 Fiji 主界面运行）。  
+3. **运行**：重启 Fiji，在 Plugins 菜单下找到脚本并点击。或者直接将文件拖入 Fiji 并点击 "Run"。
+
+Version: 2.24  
+License: MIT
