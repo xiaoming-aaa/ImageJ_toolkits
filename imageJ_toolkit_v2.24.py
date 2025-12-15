@@ -9,7 +9,9 @@ from java.awt import Component, Dimension, Font, Color, BasicStroke, BorderLayou
 from java.awt.dnd import DropTarget, DnDConstants, DropTargetAdapter
 from java.awt.datatransfer import DataFlavor
 from java.awt.event import WindowAdapter, ActionListener
-from java.io import File
+from java.io import File, FileWriter, BufferedWriter
+from java.text import SimpleDateFormat
+from java.util import Date
 import threading
 import time
 import re
@@ -17,27 +19,28 @@ import os
 import shutil
 
 """
-Cell Image Analysis Toolbox v2.24 (GUI Version)
-Author: Gemini
+Cell Image Analysis Toolbox v3.2 (Universal Compatible Edition)
+Author: Gemini & Senior Researcher
 Language: Python (Jython) wrapper for Native ImageJ Macros
 
 Description:
 A persistent floating toolbox for high-quality cell image processing.
-Now features customizable settings for modules.
+Designed for publication-quality quantitative analysis.
 
 Modules:
-1. Apply ROI & Crop (Settings: Confirm Prompt, Apply to All)
-2. Batch Merge Channels (Settings: Select Channels "1,2", Confirm Prompt)
-3. Ratio Analysis (Settings: Full Calibration Bar parameters like Zoom, Decimals, Colors)
-4. Scale Bar & Copy Sequence (Settings: Full Scale Bar parameters including Background)
+1. Apply ROI & Crop
+2. Batch Merge Channels
+3. Ratio Analysis (Background Subtraction + Logging)
+4. Scale Bar & Copy Sequence
 5. Batch Brightness Control
-6. Smart Undo (Settings: Max Steps, Confirm Prompt)
+6. Smart Undo
 7. Close All
 
-Updates (v2.24):
-- **Module 3 Settings**: Fully matched the "Calibration Bar" native dialog.
-    - Added: Fill/Label Colors, Number of Labels, Decimals, Zoom Factor, Show Unit.
-- **Module 4 Settings**: Added "Background" color option to match native Scale Bar dialog.
+Updates (v3.2):
+- **Universal Compatibility**: Downgraded syntax to Python 2.5 standard.
+    - Replaced `except Exception as e` with `except Exception, e`.
+    - Replaced `.format()` with `%` string formatting.
+    - This allows execution on standard ImageJ (Jython 2.5) and Fiji (Jython 2.7).
 """
 
 # ==========================================
@@ -46,6 +49,7 @@ Updates (v2.24):
 LAST_DROPPED_FILES = []
 CHECKPOINT_ROOT = os.path.join(IJ.getDirectory("temp"), "xiaoming_toolbox_checkpoints")
 CHECKPOINT_STACK = []
+LOG_FILE_PATH = os.path.join(IJ.getDirectory("home"), "Xiaoming_Toolbox_Log.csv")
 
 # --- Prefs Keys ---
 
@@ -60,7 +64,7 @@ PREF_SB_WIDTH = "xiaoming.sb.width"
 PREF_SB_HEIGHT = "xiaoming.sb.height"
 PREF_SB_FONT = "xiaoming.sb.font"
 PREF_SB_COLOR = "xiaoming.sb.color"
-PREF_SB_BG = "xiaoming.sb.bg" # New
+PREF_SB_BG = "xiaoming.sb.bg"
 PREF_SB_LOC = "xiaoming.sb.loc"
 PREF_SB_BOLD = "xiaoming.sb.bold"
 PREF_SB_HIDE = "xiaoming.sb.hide"
@@ -81,6 +85,10 @@ PREF_RATIO_MIN = "xiaoming.ratio.min"
 PREF_RATIO_MAX = "xiaoming.ratio.max"
 PREF_RATIO_CONFIRM = "xiaoming.ratio.confirm"
 PREF_RATIO_ADD_BAR = "xiaoming.ratio.add_bar"
+# Background Prefs
+PREF_RATIO_BG_NUM = "xiaoming.ratio.bg_num"
+PREF_RATIO_BG_DEN = "xiaoming.ratio.bg_den"
+
 # Calibration Bar Specifics
 PREF_CB_LOC = "xiaoming.cb.loc"
 PREF_CB_FILL = "xiaoming.cb.fill"
@@ -92,6 +100,39 @@ PREF_CB_ZOOM = "xiaoming.cb.zoom"
 PREF_CB_BOLD = "xiaoming.cb.bold"
 PREF_CB_OVERLAY = "xiaoming.cb.overlay"
 PREF_CB_UNIT = "xiaoming.cb.unit"
+
+# ==========================================
+# Logging Helper
+# ==========================================
+def append_to_log(img_title, operation, params_dict):
+    """
+    Writes a record of the operation to a CSV file for publication methods.
+    """
+    try:
+        new_file = not os.path.exists(LOG_FILE_PATH)
+        fw = FileWriter(LOG_FILE_PATH, True)
+        bw = BufferedWriter(fw)
+        
+        # Write Header if new file
+        if new_file:
+            bw.write("Timestamp,ImageName,Operation,Details\n")
+            
+        # Timestamp
+        sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        ts = sdf.format(Date())
+        
+        # Format params (Python 2.5 compatible)
+        param_list = []
+        for k, v in params_dict.items():
+            param_list.append("%s:%s" % (k, v))
+        param_str = " | ".join(param_list)
+        
+        # Write Line
+        line = "%s,%s,%s,%s\n" % (ts, img_title, operation, param_str)
+        bw.write(line)
+        bw.close()
+    except Exception, e:  # FIXED: Compatible syntax
+        IJ.log("Logging Error: " + str(e))
 
 # ==========================================
 # Settings Logic
@@ -115,7 +156,8 @@ def show_roi_settings():
         Prefs.set(PREF_ROI_APPLY_ALL, str(gd.getNextBoolean()).lower())
         Prefs.savePreferences()
         IJ.showStatus("ROI Settings saved.")
-    except Exception as e: IJ.log("Error settings: " + str(e))
+    except Exception, e: # FIXED
+        IJ.log("Error settings: " + str(e))
 
 # --- Merge Settings ---
 def get_merge_prefs():
@@ -138,9 +180,10 @@ def show_merge_settings():
         Prefs.set(PREF_MERGE_CONFIRM, str(gd.getNextBoolean()).lower())
         Prefs.savePreferences()
         IJ.showStatus("Merge Settings saved.")
-    except Exception as e: IJ.log("Error settings: " + str(e))
+    except Exception, e: # FIXED
+        IJ.log("Error settings: " + str(e))
 
-# --- Ratio Settings (Calibration Bar) ---
+# --- Ratio Settings (Calibration Bar & Science) ---
 def get_ratio_prefs():
     return {
         "num": int(Prefs.get(PREF_RATIO_NUM, 1)),
@@ -149,6 +192,8 @@ def get_ratio_prefs():
         "max": float(Prefs.get(PREF_RATIO_MAX, 2.0)),
         "confirm": str(Prefs.get(PREF_RATIO_CONFIRM, "true")).lower() == "true",
         "add_bar": str(Prefs.get(PREF_RATIO_ADD_BAR, "true")).lower() == "true",
+        "bg_num": float(Prefs.get(PREF_RATIO_BG_NUM, 0.0)),
+        "bg_den": float(Prefs.get(PREF_RATIO_BG_DEN, 0.0)),
         # Calibration Bar Params
         "loc": Prefs.get(PREF_CB_LOC, "Upper Right"),
         "fill": Prefs.get(PREF_CB_FILL, "White"),
@@ -168,17 +213,18 @@ def show_ratio_settings():
         locs = ["Upper Right", "Lower Right", "Upper Left", "Lower Left", "At Selection"]
         colors = ["White", "Black", "Light Gray", "Gray", "Dark Gray", "Red", "Green", "Blue", "Yellow", "None"]
         
-        gd = GenericDialog("Settings: Ratio Analysis")
-        gd.addMessage("--- Calculation ---")
-        gd.addNumericField("Numerator Ch:", p["num"], 0)
-        gd.addNumericField("Denominator Ch:", p["den"], 0)
-        gd.addNumericField("Default Min:", p["min"], 2)
-        gd.addNumericField("Default Max:", p["max"], 2)
+        gd = GenericDialog("Settings: Ratio Analysis (v3.0)")
+        gd.addMessage("--- Calculation & Science ---")
+        gd.addNumericField("Numerator Ch (Signal):", p["num"], 0)
+        gd.addNumericField("Denominator Ch (Ref):", p["den"], 0)
+        gd.addNumericField("Default BG (Num):", p["bg_num"], 1)
+        gd.addNumericField("Default BG (Den):", p["bg_den"], 1)
+        gd.addNumericField("Default Min Ratio:", p["min"], 2)
+        gd.addNumericField("Default Max Ratio:", p["max"], 2)
         gd.addCheckbox("Confirm before running", p["confirm"])
         
-        gd.addMessage("--- Calibration Bar (Native Options) ---")
+        gd.addMessage("--- Calibration Bar ---")
         gd.addCheckbox("Add Calibration Bar", p["add_bar"])
-        
         gd.addChoice("Location:", locs, p["loc"])
         gd.addChoice("Fill color:", colors, p["fill"])
         gd.addChoice("Label color:", colors, p["label"])
@@ -196,6 +242,8 @@ def show_ratio_settings():
         
         Prefs.set(PREF_RATIO_NUM, int(gd.getNextNumber()))
         Prefs.set(PREF_RATIO_DEN, int(gd.getNextNumber()))
+        Prefs.set(PREF_RATIO_BG_NUM, float(gd.getNextNumber()))
+        Prefs.set(PREF_RATIO_BG_DEN, float(gd.getNextNumber()))
         Prefs.set(PREF_RATIO_MIN, float(gd.getNextNumber()))
         Prefs.set(PREF_RATIO_MAX, float(gd.getNextNumber()))
         Prefs.set(PREF_RATIO_CONFIRM, str(gd.getNextBoolean()).lower())
@@ -215,7 +263,8 @@ def show_ratio_settings():
         
         Prefs.savePreferences()
         IJ.showStatus("Ratio Settings saved.")
-    except Exception as e: IJ.log("Error settings: " + str(e))
+    except Exception, e: # FIXED
+        IJ.log("Error settings: " + str(e))
 
 # --- Undo Settings ---
 def get_undo_max_steps():
@@ -242,7 +291,8 @@ def show_undo_settings():
         Prefs.set(PREF_UNDO_CONFIRM, str(new_confirm).lower())
         Prefs.savePreferences()
         IJ.showStatus("Undo Settings saved.")
-    except Exception as e: IJ.log("Error settings: " + str(e))
+    except Exception, e: # FIXED
+        IJ.log("Error settings: " + str(e))
 
 # --- Scale Bar Settings (Module 4) ---
 def get_sb_prefs():
@@ -253,7 +303,7 @@ def get_sb_prefs():
         "height": int(Prefs.get(PREF_SB_HEIGHT, 8.0)),
         "font": int(Prefs.get(PREF_SB_FONT, 14.0)),
         "color": Prefs.get(PREF_SB_COLOR, "White"),
-        "bg": Prefs.get(PREF_SB_BG, "None"), # Added Background
+        "bg": Prefs.get(PREF_SB_BG, "None"),
         "location": Prefs.get(PREF_SB_LOC, "Lower Right"),
         "bold": str(Prefs.get(PREF_SB_BOLD, "true")).lower() == "true",
         "hide": str(Prefs.get(PREF_SB_HIDE, "true")).lower() == "true",
@@ -275,7 +325,7 @@ def show_scalebar_settings():
         gd.addNumericField("Height in pixels:", p["height"], 0)
         gd.addNumericField("Font size:", p["font"], 0)
         gd.addChoice("Color:", colors, p["color"])
-        gd.addChoice("Background:", colors, p["bg"]) # Added
+        gd.addChoice("Background:", colors, p["bg"])
         gd.addChoice("Location:", locs, p["location"])
         gd.setInsets(0, 20, 0); gd.addCheckbox("Bold text", p["bold"])
         gd.setInsets(0, 20, 0); gd.addCheckbox("Hide text", p["hide"])
@@ -290,14 +340,15 @@ def show_scalebar_settings():
         Prefs.set(PREF_SB_HEIGHT, float(gd.getNextNumber())) 
         Prefs.set(PREF_SB_FONT, float(gd.getNextNumber()))
         Prefs.set(PREF_SB_COLOR, gd.getNextChoice())
-        Prefs.set(PREF_SB_BG, gd.getNextChoice()) # Save
+        Prefs.set(PREF_SB_BG, gd.getNextChoice())
         Prefs.set(PREF_SB_LOC, gd.getNextChoice())
         Prefs.set(PREF_SB_BOLD, str(gd.getNextBoolean()).lower())
         Prefs.set(PREF_SB_HIDE, str(gd.getNextBoolean()).lower())
         Prefs.set(PREF_SB_OVERLAY, str(gd.getNextBoolean()).lower())
         Prefs.savePreferences()
         IJ.showStatus("Scale Bar Settings saved.")
-    except Exception as e: IJ.log("Error settings: " + str(e))
+    except Exception, e: # FIXED
+        IJ.log("Error settings: " + str(e))
 
 def show_settings_placeholder(module_name):
     IJ.showMessage("Settings: " + module_name, u"\u8be5\u6a21\u5757\u6682\u65e0\u53ef\u914d\u7f6e\u7684\u9ed8\u8ba4\u53c2\u6570\u3002\n(No settings available yet)")
@@ -410,7 +461,8 @@ def run_roi_crop_tool():
         if p["confirm"]: macro_code += 'waitForUser("Click OK to Crop CURRENT image.");'
         macro_code += 'run("Crop");'
     try: IJ.runMacro(macro_code)
-    except Exception as e: IJ.log("Macro Error: " + str(e))
+    except Exception, e: # FIXED
+        IJ.log("Macro Error: " + str(e))
 
 def run_batch_merge():
     save_checkpoint()
@@ -442,37 +494,78 @@ def run_batch_merge():
     setBatchMode("exit and display");
     """ % ch_str
     try: IJ.runMacro(macro_code)
-    except Exception as e: IJ.runMacro('setBatchMode("exit and display");')
+    except Exception, e: # FIXED
+        IJ.runMacro('setBatchMode("exit and display");')
 
-def calculate_ratio_single(imp_source, d_min, d_max, bar_enabled, ch_num, ch_den):
+# --- Ratio Analysis (Scientific Edition v3.0) ---
+
+def calculate_ratio_single(imp_source, d_min, d_max, bg_ch1, bg_ch2, bar_enabled, ch_num, ch_den):
+    """
+    Scientific Calculation: (Ch_Num - BG) / (Ch_Den - BG)
+    """
     img_title = imp_source.getTitle()
+    
+    # 1. Duplication
     imp_ch1 = Duplicator().run(imp_source, ch_num, ch_num, 1, imp_source.getNSlices(), 1, imp_source.getNFrames())
     imp_ch2 = Duplicator().run(imp_source, ch_den, ch_den, 1, imp_source.getNSlices(), 1, imp_source.getNFrames())
-    IJ.run(imp_ch1, "32-bit", ""); IJ.run(imp_ch2, "32-bit", "")
-    ic = ImageCalculator(); imp_ratio = ic.run("Divide create 32-bit", imp_ch1, imp_ch2)
-    imp_mask = imp_ch2.duplicate(); imp_mask.getProcessor().setAutoThreshold("Otsu dark"); IJ.run(imp_mask, "Create Selection", "")
+    
+    # 2. Convert to 32-bit (Crucial for quantitative subtraction)
+    IJ.run(imp_ch1, "32-bit", "")
+    IJ.run(imp_ch2, "32-bit", "")
+    
+    # 3. Background Subtraction
+    IJ.run(imp_ch1, "Subtract...", "value=" + str(bg_ch1))
+    IJ.run(imp_ch2, "Subtract...", "value=" + str(bg_ch2))
+    
+    # 4. Create Mask (based on denominator structure)
+    imp_mask = imp_ch2.duplicate()
+    imp_mask.getProcessor().setAutoThreshold("Otsu dark") 
+    IJ.run(imp_mask, "Create Selection", "")
     roi = imp_mask.getRoi()
-    if roi: imp_ratio.setRoi(roi); IJ.run(imp_ratio, "Make Inverse", ""); IJ.run(imp_ratio, "Set...", "value=NaN"); imp_ratio.killRoi()
-    imp_ch1.changes=False; imp_ch1.close(); imp_ch2.changes=False; imp_ch2.close(); imp_mask.changes=False; imp_mask.close()
+    imp_mask.changes = False; imp_mask.close()
+    
+    # 5. Divide
+    ic = ImageCalculator()
+    imp_ratio = ic.run("Divide create 32-bit", imp_ch1, imp_ch2)
+    
+    # 6. Apply Mask to Ratio
+    if roi:
+        imp_ratio.setRoi(roi)
+        IJ.run(imp_ratio, "Make Inverse", "")
+        IJ.run(imp_ratio, "Set...", "value=NaN") 
+        imp_ratio.killRoi()
+    
+    # Cleanup
+    imp_ch1.changes=False; imp_ch1.close()
+    imp_ch2.changes=False; imp_ch2.close()
+    
+    # 7. Visualization
     imp_ratio.setTitle("Ratio_" + img_title)
     IJ.run(imp_ratio, "Fire", "")
     imp_ratio.setDisplayRange(d_min, d_max)
     
+    # 8. Calibration Bar
     if bar_enabled:
         p = get_ratio_prefs()
-        # Construct cmd: location=[Upper Right] fill=White label=Black number=5 decimal=2 font=12 zoom=1 overlay bold show
-        b_cmd = "location=[{}] fill={} label={} number={} decimal={} font={} zoom={} overlay".format(
+        # FIXED: Removed .format() for Python 2.5 compatibility
+        b_cmd = "location=[%s] fill=%s label=%s number=%s decimal=%s font=%s zoom=%s overlay" % (
             p["loc"], p["fill"], p["label"], p["n_labels"], p["dec"], p["font"], p["zoom"]
         )
         if p["bold"]: b_cmd += " bold"
         if p["unit"]: b_cmd += " show"
-        if not p["overlay"]: b_cmd = b_cmd.replace(" overlay", "") # remove if false, default macro might need logic
-        # Actually standard macro command logic:
-        # If 'overlay' is in string, it overlays. If not, it burns in.
-        
+        if not p["overlay"]: b_cmd = b_cmd.replace(" overlay", "")
         IJ.run(imp_ratio, "Calibration Bar...", b_cmd)
     
     imp_ratio.show()
+    
+    # 9. Audit Logging
+    log_params = {
+        "Num_Ch": ch_num, "Den_Ch": ch_den,
+        "BG_Num": bg_ch1, "BG_Den": bg_ch2,
+        "Min": d_min, "Max": d_max
+    }
+    append_to_log(img_title, "Ratio Analysis v3", log_params)
+    
     return imp_ratio
 
 def create_separate_legend(d_min, d_max):
@@ -480,7 +573,8 @@ def create_separate_legend(d_min, d_max):
     imp = NewImage.createFloatImage("Ratio_Legend", 150, 300, 1, NewImage.FILL_WHITE)
     IJ.run(imp, "Fire", ""); imp.setDisplayRange(d_min, d_max); imp.getProcessor().setValue(d_max); imp.getProcessor().fill()
     
-    b_cmd = "location=[{}] fill={} label={} number={} decimal={} font={} zoom={}".format(
+    # FIXED: Removed .format() for Python 2.5 compatibility
+    b_cmd = "location=[%s] fill=%s label=%s number=%s decimal=%s font=%s zoom=%s" % (
             p["loc"], p["fill"], p["label"], p["n_labels"], p["dec"], p["font"], p["zoom"]
     )
     if p["bold"]: b_cmd += " bold"
@@ -495,21 +589,35 @@ def run_ratio_analysis():
     if not ids: IJ.error("No images open."); return
 
     p = get_ratio_prefs()
-    ch_num = p["num"]; ch_den = p["den"]; d_min = p["min"]; d_max = p["max"]
+    ch_num = p["num"]; ch_den = p["den"]
+    d_min = p["min"]; d_max = p["max"]
+    bg_num = p["bg_num"]; bg_den = p["bg_den"]
     do_batch = False 
     
     if p["confirm"]:
-        gd = GenericDialog("Run Ratio Analysis")
+        gd = GenericDialog("Run Ratio Analysis (v3.0)")
         gd.addMessage("Open Images: " + str(len(ids)))
         gd.addCheckbox("Apply to ALL open images?", False)
-        gd.addNumericField("Min Value:", d_min, 2)
-        gd.addNumericField("Max Value:", d_max, 2)
+        gd.addMessage("--- Quantitative Params ---")
         gd.addNumericField("Numerator Ch:", ch_num, 0)
         gd.addNumericField("Denominator Ch:", ch_den, 0)
+        gd.addNumericField("Background (Num):", bg_num, 1)
+        gd.addNumericField("Background (Den):", bg_den, 1)
+        gd.addMessage("--- Display ---")
+        gd.addNumericField("Min Value:", d_min, 2)
+        gd.addNumericField("Max Value:", d_max, 2)
+        
         gd.showDialog()
         if gd.wasCanceled(): return
-        do_batch = gd.getNextBoolean(); d_min = gd.getNextNumber(); d_max = gd.getNextNumber()
+        
+        do_batch = gd.getNextBoolean()
         ch_num = int(gd.getNextNumber()); ch_den = int(gd.getNextNumber())
+        bg_num = gd.getNextNumber(); bg_den = gd.getNextNumber()
+        d_min = gd.getNextNumber(); d_max = gd.getNextNumber()
+        
+        Prefs.set(PREF_RATIO_NUM, ch_num); Prefs.set(PREF_RATIO_DEN, ch_den)
+        Prefs.set(PREF_RATIO_BG_NUM, bg_num); Prefs.set(PREF_RATIO_BG_DEN, bg_den)
+        Prefs.set(PREF_RATIO_MIN, d_min); Prefs.set(PREF_RATIO_MAX, d_max)
 
     originals = []
     if do_batch:
@@ -517,13 +625,13 @@ def run_ratio_analysis():
             if check_escape(): break
             img = WindowManager.getImage(i)
             if img and "Ratio_" not in img.getTitle() and img.getNChannels() >= max(ch_num, ch_den):
-                calculate_ratio_single(img, d_min, d_max, False, ch_num, ch_den)
+                calculate_ratio_single(img, d_min, d_max, bg_num, bg_den, False, ch_num, ch_den)
                 originals.append(img)
         if p["add_bar"]: create_separate_legend(d_min, d_max)
     else:
         active = IJ.getImage()
         if active and active.getNChannels() >= max(ch_num, ch_den):
-            calculate_ratio_single(active, d_min, d_max, p["add_bar"], ch_num, ch_den)
+            calculate_ratio_single(active, d_min, d_max, bg_num, bg_den, p["add_bar"], ch_num, ch_den)
             originals.append(active)
         else: IJ.error("Active image invalid.")
 
@@ -545,7 +653,8 @@ def run_scale_bar_and_copy_sequence():
     p = get_sb_prefs()
     
     if p["enable_bar"]:
-        params = "width={} height={} font={} color={} background={} location=[{}]".format(
+        # FIXED: Removed .format() for Python 2.5 compatibility
+        params = "width=%s height=%s font=%s color=%s background=%s location=[%s]" % (
             p["width"], p["height"], p["font"], p["color"], p["bg"], p["location"]
         )
         if p["bold"]: params += " bold"
@@ -569,7 +678,8 @@ def run_scale_bar_and_copy_sequence():
             if img:
                 img.getWindow().toFront(); img.setPosition(1, img.getSlice(), img.getFrame()); time.sleep(0.15)
                 IJ.run(img, "Copy to System", "")
-                wd = WaitForUserDialog("Paste Prompt", "Image {} of {}\nName: {}\n\nCopied. Paste then click OK.".format(count, len(titles), t))
+                # FIXED: Removed .format()
+                wd = WaitForUserDialog("Paste Prompt", "Image %s of %s\nName: %s\n\nCopied. Paste then click OK." % (count, len(titles), t))
                 wd.show()
                 if wd.escPressed(): return
         gd = GenericDialog("Finished"); gd.addMessage("All images processed.\nClose all open images?"); gd.setOKLabel("Yes"); gd.showDialog()
@@ -643,7 +753,12 @@ def reload_originals():
             imp = WindowManager.getImage(id); 
             if imp: imp.changes=False; imp.close()
     for path in LAST_DROPPED_FILES:
-        try: IJ.run("Bio-Formats Importer", "open=[" + path.replace("\\","\\\\") + "] autoscale color_mode=Colorized view=Hyperstack stack_order=XYCZT")
+        try:
+            # v3.1 Smart Opener Logic
+            if path.lower().endswith((".tif", ".tiff")):
+                IJ.open(path)
+            else:
+                IJ.run("Bio-Formats Importer", "open=[" + path.replace("\\","\\\\") + "] autoscale color_mode=Colorized view=Hyperstack stack_order=XYCZT")
         except: pass
 
 def run_close_all_no_save():
@@ -673,7 +788,13 @@ class BioFormatsDropListener(DropTargetAdapter):
             
             def worker():
                 for f in files:
-                    try: IJ.run("Bio-Formats Importer", "open=[" + f.getAbsolutePath().replace("\\","\\\\") + "] autoscale color_mode=Colorized view=Hyperstack stack_order=XYCZT")
+                    try:
+                        path = f.getAbsolutePath()
+                        # v3.1 Smart Opener Logic
+                        if path.lower().endswith((".tif", ".tiff")):
+                            IJ.open(path)
+                        else:
+                            IJ.run("Bio-Formats Importer", "open=[" + path.replace("\\","\\\\") + "] autoscale color_mode=Colorized view=Hyperstack stack_order=XYCZT")
                     except: pass
                 time.sleep(1.0)
                 save_checkpoint()
@@ -692,7 +813,7 @@ class ToolboxCloseListener(WindowAdapter):
 
 class ToolboxGUI(JFrame):
     def __init__(self):
-        super(ToolboxGUI, self).__init__("Cell Toolbox v2.24")
+        super(ToolboxGUI, self).__init__("Cell Toolbox v3.2 (Univ)")
         self.setSize(240, 480)
         self.setAlwaysOnTop(True)
         self.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE)
@@ -729,7 +850,8 @@ class ToolboxGUI(JFrame):
             if settings_func:
                 def safe_settings_run():
                     try: settings_func()
-                    except Exception as e: IJ.log("Settings Error: " + str(e))
+                    except Exception, e: # FIXED
+                        IJ.log("Settings Error: " + str(e))
                 cfg_btn.addActionListener(lambda e: threading.Thread(target=safe_settings_run).start())
             else:
                 cfg_btn.addActionListener(lambda e: threading.Thread(target=lambda: show_settings_placeholder(btn_text)).start())
@@ -740,7 +862,7 @@ class ToolboxGUI(JFrame):
 
         add_module_row("1. Apply ROI & Crop", run_roi_crop_tool, show_roi_settings)
         add_module_row("2. Batch Merge", run_batch_merge, show_merge_settings)
-        add_module_row("3. Ratio Analysis", run_ratio_analysis, show_ratio_settings)
+        add_module_row("3. Ratio Analysis (v3)", run_ratio_analysis, show_ratio_settings)
         add_module_row("4. Scale Bar & Copy", run_scale_bar_and_copy_sequence, show_scalebar_settings)
         add_module_row("5. Batch Brightness", run_batch_brightness_tool)
         main_panel.add(JSeparator())
