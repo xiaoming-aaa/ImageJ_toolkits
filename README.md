@@ -1,6 +1,8 @@
 # **ImageJ Tools for Xiaoming (小明的 ImageJ 工具箱) 🔬**
 
-**一个基于 Jython 开发的高效、轻量化 ImageJ/Fiji 浮动工具箱，专为简化细胞图像处理工作流而生。**
+**一个基于 Jython 开发的高效、轻量化 Fiji 浮动工具箱，专为简化细胞图像处理工作流而生。**
+
+**注意：请勿使用imageJ，因为版本较旧，且缺失了支持库无法运行，请使用FIJI：https://imagej.net/software/fiji/downloads**
 
 ## **🌟 核心亮点**
 
